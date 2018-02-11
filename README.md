@@ -13,7 +13,11 @@ $ export TWILIO_AUTH_TOKEN="YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY"
 ```
 
 ## Run Instructions
+Note: To run this app locally you'll need to have [ngrok](https://ngrok.com/) installed.
+
 ```
+$ ngrok http 5000
+$ export BASE_URL="YOUR_NGROK_URL_HERE"
 $ python app.py
 ```
 
