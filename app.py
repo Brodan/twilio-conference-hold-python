@@ -51,7 +51,7 @@ def incoming_call():
         # Otherwise, place them in a conference called `call_center` with all
         # other customers currently on hold.
         CUSTOMER_QUEUE[call_sid] = None
-        response.dial().conference("waiting_room", statusCallbackEvent="leave", statusCallback="/dequeue", statusCallbackMethod="GET")
+        response.dial().conference("WaitingRoom", statusCallbackEvent="leave", statusCallback="/dequeue", statusCallbackMethod="GET")
 
     return Response(str(response), 200, mimetype="application/xml")
 
@@ -97,7 +97,8 @@ def dequeue():
 
 
 def handle_agent(agent_number, call_sid):
-    """Agent will be placed in a conference until a caller is connected.
+    """
+    Agent will be placed in a conference until a caller is connected.
 
     :param agent_number: The phone number of the incoming agent.
     :param call_sid: The unique call sid of the incoming agent.
@@ -121,9 +122,21 @@ def handle_agent(agent_number, call_sid):
 
     return Response(str(response), 200, mimetype="application/xml")
 
+def queue_existing_customers():
+    """
+    In the event that the app restarts, crashes, etc while customers are still in the call queue,
+    the app needs to retrieve all the callers still in the WaitingRoom conference so that they can
+    be placed back into the CUSTOMER_QUEUE.
+    """
+    conference = client.conferences.list(friendly_name="WaitingRoom", status="in-progress")
+    if conference:
+        CUSTOMER_QUEUE.extend([call.sid for call in conference])
+
 
 if __name__ == "__main__":
     if not AGENT_NUMBERS:
-        raise Exception("At least one agent phone number must be provided.")
+        raise Exception("At least one agent must be configured.")
+
+    queue_existing_customers()
 
     app.run()
