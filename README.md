@@ -15,7 +15,7 @@ $ export TWILIO_AUTH_TOKEN="YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY"
 ```
 
 ## Run Instructions
-Note: To run this app locally you'll need to have [ngrok](https://ngrok.com/) installed.
+Note: The easiest solution to running this app locally is using [ngrok](https://ngrok.com/).
 
 ```
 $ ngrok http 5000
@@ -25,7 +25,3 @@ $ python app.py
 
 ## License
 MIT
-
-## Donate
-Enjoy this app?
-<a href='https://ko-fi.com/A71814ZL' target='_blank'><img height='36' src='https://az743702.vo.msecnd.net/cdn/kofi3.png?v=0' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>

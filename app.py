@@ -1,41 +1,37 @@
 import os
-from flask import Flask, request, Response
-from twilio.twiml.voice_response import VoiceResponse
-from twilio.rest import Client
+import time
 from collections import OrderedDict
+from threading import Thread
 
+from flask import Flask, Response, request
+from twilio.rest import Client
+from twilio.twiml.voice_response import Dial, VoiceResponse
 
 app = Flask(__name__)
 client = Client()
+BASE_URL = os.environ.get("BASE_URL", "http://XXXXXXXXXXXX.ngrok.io") # Replace this value.
 
-# This should be set to the publicly reachable URL for your application.
-# This could an ngrok URL, such as "https://17224f9e.ngrok.io".
-# Do not include trailing slash when setting this variable.
-BASE_URL = os.environ["BASE_URL"]
+AGENT_NUMBERS = ["+15555555555"] # Replace this value.
 
-# There must be at least one phone number listed in order for the app to start.
-# Be careful about committing real phone numbers to source control. Numbers in
-# this list must be E.164 formatted.
-AGENT_NUMBERS = ["+15555555555"]
-
-# These two queues should be empty on application startup. For the sake of
-# simplicitly, these variables are defined at the global scope. For a
-# production call-center, a more sophisticated approach should be taken.
-CUSTOMER_QUEUE, AGENT_QUEUE = OrderedDict(), OrderedDict()
+CUSTOMER_QUEUE = OrderedDict()
+AGENT_QUEUE = OrderedDict()
 
 
-@app.route("/incoming_call", methods=["POST"])
-def incoming_call():
-    """Handle incoming calls from any number, agent or otherwise.
+class CustomerRedirect(Thread):
+    def __init__(self, customer_sid, agent_sid):
+        Thread.__init__(self)
+        self.customer_sid = customer_sid
+        self.agent_sid = agent_sid
 
-    :return: The appropriate TwiML to handle the call, i.e. a
-        twilio.twiml.voice_responce.VoiceResponse object, casted to a string.
+    def run(self):
+        time.sleep(5) # HACKS
+        client.calls(self.customer_sid).update(
+            twiml=f"<Response><Dial><Conference>{self.agent_sid}</Conference></Dial></Response>"
+        )
 
-        The contents of the TwiML will vary depending on if an agent or a
-        customer is calling.
-    :rtype: str
-    """
 
+@app.route("/incoming", methods=["POST"])
+def incoming():
     from_number = request.form["From"]
     call_sid = request.form["CallSid"]
 
@@ -43,100 +39,45 @@ def incoming_call():
         return handle_agent(from_number, call_sid)
 
     response = VoiceResponse()
-    try:
-        # If an agent is available immediately, connect the customer with them.
-        available_agent = AGENT_QUEUE.popitem(last=False)[0]
-        response.dial().queue(available_agent)
-    except KeyError:
-        # Otherwise, place them in a conference called `call_center` with all
-        # other customers currently on hold.
-        CUSTOMER_QUEUE[call_sid] = None
-        response.dial().conference("WaitingRoom", statusCallbackEvent="leave", statusCallback="/dequeue", statusCallbackMethod="GET")
-
-    return Response(str(response), 200, mimetype="application/xml")
-
-
-@app.route("/conference/<conference_name>", methods=["POST"])
-def conference(conference_name):
-    """Connect an in-progress call to an existing conference.
-
-    :param conference_name: The name of the Twilio <Conference> to connect the
-        caller to. This name will be a unique call sid from an incoming caller.
-
-    :return: The appropriate TwiML to handle the call, i.e. a
-        twilio.twiml.voice_responce.VoiceResponse object, casted to a string.
-    :rtype: str
-    """
-    response = VoiceResponse().dial().conference(conference_name)
-    return Response(str(response), 200, mimetype="application/xml")
-
-
-@app.route("/dequeue", methods=["GET", "POST"])
-def dequeue():
-    """
-    Remove a call SID from the appropriate queue.
-    """
-    call_sid = request.form["CallSid"]
-    response = VoiceResponse()
-
-    if request.method == "GET":
-        try:
-            CUSTOMER_QUEUE.pop(call_sid)
-        except KeyError:
-            pass
-
-    if request.method == "POST":
-        try:
-            AGENT_QUEUE.pop(call_sid)
-        except KeyError:
-            pass
-        finally:
-            response.hangup()
-
-    return Response(str(response), 200, mimetype="application/xml")
-
-
-def handle_agent(agent_number, call_sid):
-    """
-    Agent will be placed in a conference until a caller is connected.
-
-    :param agent_number: The phone number of the incoming agent.
-    :param call_sid: The unique call sid of the incoming agent.
-    :return: The appropriate TwiML to handle the call, i.e. a
-        twilio.twiml.voice_responce.VoiceResponse object, casted to a string.
-    :rtype: str
-    """
-    response = VoiceResponse()
+    dial = Dial()
 
     try:
-        # If any callers are in the conference, redirect whoever has been
-        # waiting the longest by popping the first caller off the queue.
-        oldest_call = CUSTOMER_QUEUE.popitem(last=False)[0]
-        client.calls(oldest_call).update(url=BASE_URL + "/conference/" + call_sid, method="POST")
-        response.dial().conference(call_sid)
+        available_agent = AGENT_QUEUE.popitem(last=False)        
+        dial.conference(available_agent[1])
     except KeyError:
-        # If no callers are in the conference, add the agent to the agent queue
-        # so that the next caller will automatically be connected to an agent.
-        AGENT_QUEUE[call_sid] = None
-        response.enqueue(call_sid, action="/dequeue", method="POST")
-
+        CUSTOMER_QUEUE[from_number] = call_sid
+        dial.conference('Waiting Room')
+        
+    response.append(dial)
     return Response(str(response), 200, mimetype="application/xml")
 
-def queue_existing_customers():
-    """
-    In the event that the app restarts, crashes, etc while customers are still in the call queue,
-    the app needs to retrieve all the callers still in the WaitingRoom conference so that they can
-    be placed back into the CUSTOMER_QUEUE.
-    """
-    conference = client.conferences.list(friendly_name="WaitingRoom", status="in-progress")
-    if conference:
-        CUSTOMER_QUEUE.extend([call.sid for call in conference])
+
+def handle_agent(agent_number, agent_call_sid):
+    response = VoiceResponse()
+    response.dial().conference(agent_call_sid)
+
+    try:
+        oldest_call = CUSTOMER_QUEUE.popitem(last=False)
+        redirect_thread = CustomerRedirect(oldest_call[1], agent_call_sid)
+        redirect_thread.start()
+    except KeyError:
+        AGENT_QUEUE[agent_number] = agent_call_sid
+    return Response(str(response), 200, mimetype="application/xml")
+
+
+@app.route("/status", methods=["POST"])
+def status():
+    if request.form["CallStatus"].lower() == "completed":
+        try:
+            CUSTOMER_QUEUE.pop(request.form["From"])
+        except KeyError:
+            # We don't really care if this fails.
+            pass
+
+    return Response('', 200)
 
 
 if __name__ == "__main__":
     if not AGENT_NUMBERS:
-        raise Exception("At least one agent must be configured.")
-
-    queue_existing_customers()
-
+        raise Exception("At least one agent phone number must be provided.")
     app.run()
