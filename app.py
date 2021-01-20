@@ -7,6 +7,7 @@ from flask import Flask, Response, request
 from twilio.rest import Client
 from twilio.twiml.voice_response import Dial, VoiceResponse
 
+
 app = Flask(__name__)
 client = Client()
 
@@ -39,7 +40,7 @@ class CustomerRedirect(Thread):
         self.agent_sid = agent_sid
 
     def run(self):
-        time.sleep(5) # Hacks
+        time.sleep(4) # Hacks
         client.calls(self.customer_sid).update(
             twiml=f"<Response><Dial><Conference>{self.agent_sid}</Conference></Dial></Response>"
         )
